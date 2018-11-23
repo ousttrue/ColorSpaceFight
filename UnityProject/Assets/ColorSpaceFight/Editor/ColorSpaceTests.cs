@@ -63,9 +63,10 @@ namespace ColorSpaceFight
             }
         }
 
-        static Byte Read(RenderTexture dst)
+        static Byte Read(RenderTexture dst, bool linear = false)
         {
-            var read = new Texture2D(2, 2, TextureFormat.RGBA32, false, true);
+            var read = new Texture2D(dst.width, dst.height, TextureFormat.RGBA32, false, linear);
+            /*
             read.SetPixels32(new Color32[]
             {
                 Color.black,
@@ -74,16 +75,30 @@ namespace ColorSpaceFight
                 Color.black,
             });
             read.Apply();
+            */
 
             //RenderTexture.active = dst;
-            read.ReadPixels(new Rect(0, 0, 2, 2), 0, 0);
+            Assert.AreSame(RenderTexture.active, dst);
+            read.ReadPixels(new Rect(0, 0, dst.width, dst.height), 0, 0);
             read.Apply();
             RenderTexture.active = null;
             /*
             var pixels = read.GetPixels32();
             return pixels[0].r;
             */
-            return read.GetRawTextureData()[1];
+
+            var png = read.EncodeToPNG();
+            UnityEngine.Object.DestroyImmediate(read);
+
+            var pixel = default(Color32);
+            if (TextureHelper.GetPngPixel(png, png.Length, 0, 0, ref pixel))
+            {
+                return pixel.g;
+            }
+
+            //return read.GetRawTextureData()[1];
+
+            throw new Exception();
         }
 
         static Byte Blit(Texture2D src, RenderTexture dst, Material material, bool? setSRGBWrite = null)
@@ -95,9 +110,14 @@ namespace ColorSpaceFight
                 GL.sRGBWrite = setSRGBWrite.Value;
             }
             Graphics.Blit(src, dst, material);
+            Assert.AreSame(RenderTexture.active, dst);
             GL.sRGBWrite = restore;
+            UnityEngine.GameObject.DestroyImmediate(src);
 
-            return Read(dst);
+            var b= Read(dst);
+            UnityEngine.GameObject.DestroyImmediate(dst);
+
+            return b;
         }
 
         static Byte Blit(Byte value, Texture2D src, RenderTexture dst, bool? setSRGBWrite = null)
@@ -113,11 +133,46 @@ namespace ColorSpaceFight
                 GL.sRGBWrite = setSRGBWrite.Value;
             }
             Graphics.Blit(src, dst);
+            Assert.AreSame(RenderTexture.active, dst);
             GL.sRGBWrite = restore;
+            UnityEngine.GameObject.DestroyImmediate(src);
 
-            return Read(dst);
+            var b = Read(dst);
+            UnityEngine.GameObject.DestroyImmediate(dst);
+
+            return b;
         }
 
+        struct ColorSpaceScope : IDisposable
+        {
+            bool m_sRGBWrite;
+
+            public ColorSpaceScope(RenderTextureReadWrite colorSpace)
+            {
+                m_sRGBWrite = GL.sRGBWrite;
+                switch (colorSpace)
+                {
+                    case RenderTextureReadWrite.Linear:
+                        GL.sRGBWrite = false;
+                        break;
+
+                    case RenderTextureReadWrite.sRGB:
+                    default:
+                        GL.sRGBWrite = true;
+                        break;
+                }
+            }
+            public ColorSpaceScope(bool sRGBWrite)
+            {
+                m_sRGBWrite = GL.sRGBWrite;
+                GL.sRGBWrite = sRGBWrite;
+            }
+
+            public void Dispose()
+            {
+                GL.sRGBWrite = m_sRGBWrite;
+            }
+        }
 
         [Test]
         public void DefaultValueTest()
@@ -153,6 +208,59 @@ namespace ColorSpaceFight
             }
         }
 
+        static Byte CopySRGBWrite(Texture2D src, bool isSRGB)
+        {
+            var renderTexture = new RenderTexture(src.width, src.height, 0,
+                RenderTextureFormat.ARGB32,
+                RenderTextureReadWrite.sRGB);
+
+            var restore = GL.sRGBWrite;
+            GL.sRGBWrite = isSRGB;
+            {
+                Graphics.Blit(src, renderTexture);
+                Assert.AreSame(RenderTexture.active, renderTexture);
+            }
+            GL.sRGBWrite = restore;
+            UnityEngine.GameObject.DestroyImmediate(src);
+
+            var b = Read(renderTexture, isSRGB);
+            UnityEngine.GameObject.DestroyImmediate(renderTexture);
+
+            return b;
+        }
+
+        [Test]
+        public void BlitWithoutMaterialTest2()
+        {
+            {
+                var src = new Texture2D(2, 2, TextureFormat.RGBA32, false, false);
+                src.SetPixels32(new[] {
+                    new Color32(127, 127, 127, 255),
+                    new Color32(127, 127, 127, 255),
+                    new Color32(127, 127, 127, 255),
+                    new Color32(127, 127, 127, 255),
+                });
+                src.Apply();
+
+                var b = CopySRGBWrite(src, true);
+                Assert.AreEqual(127, b);
+            }
+
+            {
+                var src = new Texture2D(2, 2, TextureFormat.RGBA32, false, false);
+                src.SetPixels32(new[] {
+                    new Color32(127, 127, 127, 255),
+                    new Color32(127, 127, 127, 255),
+                    new Color32(127, 127, 127, 255),
+                    new Color32(127, 127, 127, 255),
+                });
+                src.Apply();
+
+                var b = CopySRGBWrite(src, false);
+                Assert.AreEqual(160, b);
+            }
+        }
+
         [Test]
         public void BlitWithMaterialTest()
         {
@@ -176,7 +284,7 @@ namespace ColorSpaceFight
             }
 
             {
-                var pixel = Blit(new Texture2D(2, 2, TextureFormat.RGBA32, false, false),
+                var pixel = Blit(new Texture2D(2, 2),
                     new RenderTexture(2, 2, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB),
                     material,
                     true);
@@ -184,7 +292,7 @@ namespace ColorSpaceFight
             }
 
             {
-                var pixel = Blit(new Texture2D(2, 2, TextureFormat.RGBA32, false, false),
+                var pixel = Blit(new Texture2D(2, 2),
                     new RenderTexture(2, 2, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB),
                     material,
                     false);
@@ -192,10 +300,18 @@ namespace ColorSpaceFight
             }
 
             {
-                var pixel = Blit(new Texture2D(2, 2, TextureFormat.RGBA32, false, false),
+                var pixel = Blit(new Texture2D(2, 2),
                     new RenderTexture(2, 2, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear),
                     material,
                     false);
+                Assert.AreEqual(127, pixel);
+            }
+
+            {
+                var pixel = Blit(new Texture2D(2, 2),
+                    new RenderTexture(2, 2, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear),
+                    material,
+                    true);
                 Assert.AreEqual(127, pixel);
             }
         }

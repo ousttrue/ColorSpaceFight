@@ -163,6 +163,9 @@ namespace ColorSpaceFight
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void GetTextureDesc(IntPtr texture, ref D3D11_TEXTURE2D_DESC desc);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern bool GetPngPixel(Byte[] bytes, int length, int x, int y, ref UnityEngine.Color32 pixel);
     }
 
     public static class D3D11_TEXTURE2D_DESC_extensions
